@@ -1,6 +1,4 @@
 # certiwipe_app.py
-#
-# The main GUI application for CertiWipe Pro.
 
 import tkinter as tk
 from tkinter import ttk, simpledialog, messagebox, scrolledtext, filedialog
@@ -8,6 +6,8 @@ import platform
 import subprocess
 import time
 import os
+import json
+import requests
 
 # Import functions from our other modules
 import key_manager
@@ -121,9 +121,9 @@ class CertiWipeApp:
     def _perform_wipe(self, drive_info):
         self.log(f"Starting wipe on /dev/{drive_info.split(' ')[0]}...")
         self.wipe_button.config(state='disabled')
-        for i in range(10): # Simulate work
-            self.log(f"Sanitizing block {i+1} of 10...")
-            time.sleep(0.3)
+        for i in range(5): # Shorter simulation
+            self.log(f"Sanitizing block {i+1} of 5...")
+            time.sleep(0.2)
         self.log("Sanitization complete.")
         
         device_data = {"deviceString": drive_info, "wipeMethod": "NIST 800-88 Purge/Clear (Simulated)"}
@@ -132,14 +132,32 @@ class CertiWipeApp:
             self.log("Loading private key for signing...")
             private_key = key_manager.load_private_key()
             self.log("Generating and signing certificate...")
-            json_file, pdf_file = certificate_utils.generate_certificate(device_data, private_key)
+            cert_data, json_file, pdf_file = certificate_utils.generate_certificate(device_data, private_key)
             self.log(f"SUCCESS! Certificate saved as {pdf_file}", "SUCCESS")
+            
+            # --- NEW: Register certificate with the server ---
+            self._register_certificate_with_server(cert_data)
+            
             messagebox.showinfo("Wipe Complete", f"Certificate saved as:\n{pdf_file}")
         except Exception as e:
             self.log(f"Certificate generation failed: {e}", "ERROR")
             messagebox.showerror("Certificate Error", f"Error: {e}")
         finally:
             self.wipe_button.config(state='normal')
+
+    def _register_certificate_with_server(self, cert_data):
+        """Sends the generated certificate data to the verification server."""
+        self.log("Registering certificate with public verification server...")
+        server_url = "http://127.0.0.1:5000/api/register_wipe"
+        try:
+            response = requests.post(server_url, json=cert_data, timeout=5)
+            if response.status_code == 201:
+                verification_url = f"http://127.0.0.1:5000/verify/{cert_data['certificateId']}"
+                self.log(f"Certificate registered successfully. View at: {verification_url}", "SUCCESS")
+            else:
+                self.log(f"Server error: {response.status_code} - {response.text}", "ERROR")
+        except requests.exceptions.RequestException as e:
+            self.log(f"Could not connect to verification server: {e}", "ERROR")
 
     def _select_verification_file(self):
         filepath = filedialog.askopenfilename(title="Select Certificate File", filetypes=(("JSON files", "*.json"),))
